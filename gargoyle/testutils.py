@@ -35,7 +35,12 @@ class SwitchContextManager(object):
     def __init__(self, gargoyle=gargoyle, **keys):
         self.gargoyle = gargoyle
         self.is_active_func = gargoyle.is_active
-        self.keys = keys
+        switches = {}
+        if 'switches' in keys:
+            switches.update(keys['switches'])
+            del keys['switches']
+        switches.update(keys)
+        self.keys = switches
         self._state = {}
         self._values = {
             True: gargoyle.GLOBAL,

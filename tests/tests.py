@@ -857,6 +857,24 @@ class SwitchContextManagerTest(TestCase):
         self.assertFalse(test2())
         self.assertEquals(self.gargoyle['test'].status, GLOBAL)
 
+    def test_hierarchical(self):
+        switch = self.gargoyle['test:hierarchy']
+        switch.status = DISABLED
+
+        @switches(self.gargoyle, switches={'test:hierarchy':True})
+        def test():
+            return self.gargoyle.is_active('test:hierarchy')
+
+        self.assertTrue(test())
+        self.assertEquals(self.gargoyle['test:hierarchy'].status, DISABLED)
+        switch.status = GLOBAL
+
+        @switches(self.gargoyle, switches={'test:hierarchy': False})
+        def test2():
+            return self.gargoyle.is_active('test:hierarchy')
+
+        self.assertFalse(test2())
+
     def test_context_manager(self):
         switch = self.gargoyle['test']
         switch.status = DISABLED

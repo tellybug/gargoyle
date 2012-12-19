@@ -33,11 +33,11 @@ class Switch(models.Model):
 
     ``value`` is stored with by type label, and then by column:
 
-    >>> {
-    >>>   namespace: {
-    >>>       id: [[INCLUDE, 0, 50], [INCLUDE, 'string']] // 50% of users
-    >>>   }
-    >>> }
+    {
+      namespace: {
+           id: [[INCLUDE, 0, 50], [INCLUDE, 'string']] # 50% of users
+      }
+    }
     """
 
     STATUS_CHOICES = (

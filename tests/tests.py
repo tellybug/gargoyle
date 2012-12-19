@@ -1,13 +1,11 @@
 """
-gargoyle.tests.tests
-~~~~~~~~~~~~~~~~~~~~
-
 :copyright: (c) 2010 DISQUS.
 :license: Apache License 2.0, see LICENSE for more details.
 """
 
 import datetime
 
+from django.conf import settings
 from django.contrib.auth.models import User, AnonymousUser
 from django.core.cache import cache
 from django.http import HttpRequest, Http404, HttpResponse
@@ -17,7 +15,8 @@ from django.template import Context, Template, TemplateSyntaxError
 from gargoyle.builtins import IPAddressConditionSet, UserConditionSet, HostConditionSet
 from gargoyle.decorators import switch_is_active
 from gargoyle.helpers import MockRequest
-from gargoyle.models import Switch, SwitchManager, SELECTIVE, DISABLED, GLOBAL, INHERIT
+from gargoyle.models import Switch, SELECTIVE, DISABLED, GLOBAL, INHERIT
+from gargoyle.manager import SwitchManager
 from gargoyle.testutils import switches
 
 import socket
@@ -31,6 +30,10 @@ class APITest(TestCase):
         self.gargoyle = SwitchManager(Switch, key='key', value='value', instances=True, auto_create=True)
         self.gargoyle.register(UserConditionSet(User))
         self.gargoyle.register(IPAddressConditionSet())
+        self.internal_ips = settings.INTERNAL_IPS
+
+    def tearDown(self):
+        settings.INTERNAL_IPS = self.internal_ips
 
     def test_builtin_registration(self):
         self.assertTrue('gargoyle.builtins.UserConditionSet(auth.user)' in self.gargoyle._registry)
@@ -152,6 +155,34 @@ class APITest(TestCase):
 
         user = User(pk=0, username='foo', is_staff=True)
         self.assertTrue(self.gargoyle.is_active('test', user))
+
+        user = User(pk=0, username='bar', is_staff=False)
+        self.assertFalse(self.gargoyle.is_active('test', user))
+
+        user = User(pk=0, username='bar', is_staff=True)
+        self.assertFalse(self.gargoyle.is_active('test', user))
+
+    def test_only_exclusions(self):
+        condition_set = 'gargoyle.builtins.UserConditionSet(auth.user)'
+
+        switch = Switch.objects.create(
+            key='test',
+            status=SELECTIVE,
+        )
+        switch = self.gargoyle['test']
+
+        switch.add_condition(
+            condition_set=condition_set,
+            field_name='username',
+            condition='bar',
+            exclude=True
+        )
+
+        user = User(pk=0, username='foo', is_staff=False)
+        self.assertFalse(self.gargoyle.is_active('test', user))
+
+        user = User(pk=0, username='foo', is_staff=True)
+        self.assertFalse(self.gargoyle.is_active('test', user))
 
         user = User(pk=0, username='bar', is_staff=False)
         self.assertFalse(self.gargoyle.is_active('test', user))
@@ -405,6 +436,34 @@ class APITest(TestCase):
 
         self.assertTrue(self.gargoyle.is_active('test', user))
 
+    def test_ip_address_internal_ips(self):
+        condition_set = 'gargoyle.builtins.IPAddressConditionSet'
+
+        Switch.objects.create(
+            key='test',
+            status=SELECTIVE,
+        )
+        switch = self.gargoyle['test']
+
+        request = HttpRequest()
+        request.META['REMOTE_ADDR'] = '192.168.1.1'
+
+        self.assertFalse(self.gargoyle.is_active('test', request))
+
+        switch.add_condition(
+            condition_set=condition_set,
+            field_name='internal_ip',
+            condition='1',
+        )
+
+        settings.INTERNAL_IPS = ['192.168.1.1']
+
+        self.assertTrue(self.gargoyle.is_active('test', request))
+
+        settings.INTERNAL_IPS = []
+
+        self.assertFalse(self.gargoyle.is_active('test', request))
+
     def test_ip_address(self):
         condition_set = 'gargoyle.builtins.IPAddressConditionSet'
 
@@ -637,6 +696,146 @@ class APITest(TestCase):
         user = User(pk=8771)
         self.assertTrue(self.gargoyle.is_active('test:child', user))
 
+    def test_parent_override_child_state(self):
+        Switch.objects.create(
+            key='test',
+            status=DISABLED,
+        )
+
+        Switch.objects.create(
+            key='test:child',
+            status=GLOBAL,
+        )
+
+        self.assertFalse(self.gargoyle.is_active('test:child'))
+
+    def test_child_state_is_used(self):
+        Switch.objects.create(
+            key='test',
+            status=GLOBAL,
+        )
+
+        Switch.objects.create(
+            key='test:child',
+            status=DISABLED,
+        )
+
+        self.assertFalse(self.gargoyle.is_active('test:child'))
+
+    def test_parent_override_child_condition(self):
+        condition_set = 'gargoyle.builtins.UserConditionSet(auth.user)'
+
+        Switch.objects.create(
+            key='test',
+            status=SELECTIVE,
+        )
+
+        parent = self.gargoyle['test']
+
+        parent.add_condition(
+            condition_set=condition_set,
+            field_name='username',
+            condition='bob',
+        )
+
+        Switch.objects.create(
+            key='test:child',
+            status=GLOBAL,
+        )
+
+        user = User(username='bob')
+        self.assertTrue(self.gargoyle.is_active('test:child', user))
+
+        user = User(username='joe')
+        self.assertFalse(self.gargoyle.is_active('test:child', user))
+
+        self.assertFalse(self.gargoyle.is_active('test:child'))
+
+    def test_child_condition_differing_than_parent_loses(self):
+        condition_set = 'gargoyle.builtins.UserConditionSet(auth.user)'
+
+        Switch.objects.create(
+            key='test',
+            status=SELECTIVE,
+        )
+
+        parent = self.gargoyle['test']
+
+        parent.add_condition(
+            condition_set=condition_set,
+            field_name='username',
+            condition='bob',
+        )
+
+        Switch.objects.create(
+            key='test:child',
+            status=SELECTIVE,
+        )
+
+        child = self.gargoyle['test:child']
+
+        child.add_condition(
+            condition_set=condition_set,
+            field_name='username',
+            condition='joe',
+        )
+
+        user = User(username='bob')
+        self.assertFalse(self.gargoyle.is_active('test:child', user))
+
+        user = User(username='joe')
+        self.assertFalse(self.gargoyle.is_active('test:child', user))
+
+        user = User(username='john')
+        self.assertFalse(self.gargoyle.is_active('test:child', user))
+
+        self.assertFalse(self.gargoyle.is_active('test:child'))
+
+    def test_child_condition_including_parent_wins(self):
+        condition_set = 'gargoyle.builtins.UserConditionSet(auth.user)'
+
+        Switch.objects.create(
+            key='test',
+            status=SELECTIVE,
+        )
+
+        parent = self.gargoyle['test']
+
+        parent.add_condition(
+            condition_set=condition_set,
+            field_name='username',
+            condition='bob',
+        )
+
+        Switch.objects.create(
+            key='test:child',
+            status=SELECTIVE,
+        )
+
+        child = self.gargoyle['test:child']
+
+        child.add_condition(
+            condition_set=condition_set,
+            field_name='username',
+            condition='bob',
+        )
+        child.add_condition(
+            condition_set=condition_set,
+            field_name='username',
+            condition='joe',
+        )
+
+        user = User(username='bob')
+        self.assertTrue(self.gargoyle.is_active('test:child', user))
+
+        user = User(username='joe')
+        self.assertFalse(self.gargoyle.is_active('test:child', user))
+
+        user = User(username='john')
+        self.assertFalse(self.gargoyle.is_active('test:child', user))
+
+        self.assertFalse(self.gargoyle.is_active('test:child'))
+
 
 class ConstantTest(TestCase):
     def setUp(self):
@@ -849,6 +1048,7 @@ class SwitchContextManagerTest(TestCase):
         self.assertEquals(self.gargoyle['test'].status, DISABLED)
 
         switch.status = GLOBAL
+        switch.save()
 
         @switches(self.gargoyle, test=False)
         def test2():
@@ -885,6 +1085,7 @@ class SwitchContextManagerTest(TestCase):
         self.assertEquals(self.gargoyle['test'].status, DISABLED)
 
         switch.status = GLOBAL
+        switch.save()
 
         with switches(self.gargoyle, test=False):
             self.assertFalse(self.gargoyle.is_active('test'))

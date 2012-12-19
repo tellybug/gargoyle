@@ -29,20 +29,20 @@ $(document).ready(function () {
         $.facebox($("#switchForm").tmpl({ add: true }));
     });
 
-    $(".switches tr").live("click", function (ev) {
-        if (ev.target.tagName == 'A' || ev.target.tagName == 'INPUT' || ev.target.tagName == 'LABEL') {
-            return;
-        }
-        var $this = $(this);
-        $(".switches tr").each(function (_, el) {
-            var $el = $(el);
-            if (el == $this.get(0)) {
-                $el.removeClass("collapsed");
-            } else {
-                $el.addClass("collapsed");
-            }
-        });
-    });
+    // $(".switches tr").live("click", function (ev) {
+    //     if (ev.target.tagName == 'A' || ev.target.tagName == 'INPUT' || ev.target.tagName == 'LABEL') {
+    //         return;
+    //     }
+    //     var $this = $(this);
+    //     $(".switches tr").each(function (_, el) {
+    //         var $el = $(el);
+    //         if (el == $this.get(0)) {
+    //             $el.removeClass("collapsed");
+    //         } else {
+    //             $el.addClass("collapsed");
+    //         }
+    //     });
+    // });
 
     $(".switches .edit").live("click", function () {
         var row = $(this).parents("tr:first");
@@ -59,6 +59,10 @@ $(document).ready(function () {
     $(".switches .delete").live("click", function () {
         var row = $(this).parents("tr:first");
         var table = row.parents("table:first");
+
+        if (!confirm('Are you SURE you want to remove this switch?')) {
+            return;
+        }
 
         api(GARGOYLE.deleteSwitch, { key: row.attr("data-switch-key") },
             function () {
@@ -96,6 +100,7 @@ $(document).ready(function () {
                 if (swtch.status == status) {
                     row.find(".toggled").removeClass("toggled");
                     el.addClass("toggled");
+                    row.attr('data-switch-status', swtch.status);
                     if ($.isArray(swtch.conditions) && swtch.conditions.length < 1 && swtch.status == 2) {
                         swtch.status = 3;
                     }
